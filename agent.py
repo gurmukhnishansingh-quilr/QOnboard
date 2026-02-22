@@ -13,8 +13,9 @@ where it left off.
 from __future__ import annotations
 
 import argparse
-import json
+import bcrypt
 import logging
+import secrets
 import sys
 import traceback
 from typing import Optional
@@ -37,6 +38,8 @@ from state import StateManager
 setup_logging()
 logger = logging.getLogger("agent")
 
+_TOTAL_STEPS = 5
+
 
 # ── Consent ────────────────────────────────────────────────────────────────────
 
@@ -44,28 +47,30 @@ class UserSkipped(Exception):
     """Raised when the operator declines to proceed with a step."""
 
 
-def confirm_step(step_num: int, total: int, title: str, content) -> None:
+def confirm_step(step_num: int, title: str, content) -> None:
     """Render a coloured panel with the step preview, then prompt Y/N.
 
     Raises UserSkipped if the operator enters N.
     """
     panel = Panel(
         content,
-        title=f"[bold cyan]STEP {step_num}/{total}[/] — [bold white]{title}[/]",
+        title=f"[bold cyan]STEP {step_num}/{_TOTAL_STEPS}[/] — [bold white]{title}[/]",
         border_style="cyan",
         padding=(1, 2),
     )
     console.print()
     console.print(panel)
     if not Confirm.ask("  [bold]Proceed?[/bold]"):
-        raise UserSkipped(f"Step {step_num}/{total} — [bold yellow]{title}[/] skipped by operator")
+        raise UserSkipped(
+            f"Step {step_num}/{_TOTAL_STEPS} — [bold yellow]{title}[/] skipped by operator"
+        )
 
 
-def skip_step(step_num: int, total: int, title: str) -> None:
+def skip_step(step_num: int, title: str) -> None:
     """Show a dimmed already-done indicator for a step completed in a previous run."""
     console.print()
     console.print(Rule(
-        f"[dim] ✓  Step {step_num}/{total} — {title} — already completed [/]",
+        f"[dim] ✓  Step {step_num}/{_TOTAL_STEPS} — {title} — already completed [/]",
         style="dim green",
     ))
 
@@ -76,6 +81,19 @@ def extract_email_domain(email: str) -> str:
     if "@" not in email:
         raise ValueError(f"Invalid email address: '{email}'")
     return email.split("@", 1)[1].lower().strip()
+
+
+def monitoring_email(email_domain: str) -> str:
+    """Derive the monitoring user email: monitor+{domain-without-tld}@quilr.ai."""
+    label = email_domain.rsplit(".", 1)[0]   # 'acme.com' → 'acme'
+    return f"monitor+{label}@quilr.ai"
+
+
+def generate_password() -> tuple[str, str]:
+    """Return (plaintext, bcrypt_hash) for a new random password."""
+    plaintext = secrets.token_urlsafe(16)
+    hashed = bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt()).decode()
+    return plaintext, hashed
 
 
 # ── Core processing ────────────────────────────────────────────────────────────
@@ -127,36 +145,45 @@ def process_ticket(
         url = f"https://{domain}/bff/auth/auth/onboard"
 
         if state.is_step_done(ticket.key, 1):
-            skip_step(1, 4, f"Onboard API  ({len(ticket.users)} user(s))")
+            skip_step(1, f"Onboard API  ({len(ticket.users)} user(s))")
         else:
-            # Check which users are already in the DB
+            # Classify users by accountType
             new_users = []
-            existing_users = []
+            existing_users: list[tuple] = []   # (ExtractedDetails, reason)
             for u in ticket.users:
-                if env_clients.pg.user_exists(u.email):
-                    existing_users.append(u)
-                else:
+                account_type = env_clients.pg.get_user_account_type(u.email)
+                if account_type is None:
                     new_users.append(u)
+                elif account_type.lower() == "credentials":
+                    existing_users.append((u, "internal user — credentials account"))
+                    logger.info(
+                        "[yellow]⚡[/] Skipping [cyan]%s[/] — internal credentials account",
+                        u.email,
+                    )
+                else:
+                    existing_users.append((u, f"already onboarded — {account_type} account"))
+                    logger.info(
+                        "[yellow]⚡[/] Skipping [cyan]%s[/] — existing %s account",
+                        u.email, account_type,
+                    )
 
             payload_preview = Table(box=None, padding=(0, 2), show_header=False)
             payload_preview.add_column(style="dim", no_wrap=True)
             payload_preview.add_column()
-            idx = 1
-            for u in new_users:
+            for idx, u in enumerate(new_users, 1):
                 payload_preview.add_row(
                     f"[{idx}]",
                     f"[cyan]{u.email}[/]  {u.firstname} {u.lastname}",
                 )
-                idx += 1
-            for u in existing_users:
+            for u, reason in existing_users:
                 payload_preview.add_row(
                     "[dim][skip][/dim]",
-                    f"[dim]{u.email}  {u.firstname} {u.lastname}  (already in user table)[/dim]",
+                    f"[dim]{u.email}  {u.firstname} {u.lastname}  ({reason})[/dim]",
                 )
 
             if not new_users:
                 logger.info(
-                    "[yellow]⚡[/] All %d user(s) already exist in the user table — skipping Onboard API",
+                    "[yellow]⚡[/] All %d user(s) skipped — no Onboard API calls needed",
                     len(existing_users),
                 )
             else:
@@ -165,7 +192,7 @@ def process_ticket(
                     title += f", {len(existing_users)} skipped"
                 title += " user(s))"
                 confirm_step(
-                    1, 4, title,
+                    1, title,
                     Group(
                         Text(f"  POST  {url}", style="bold green"),
                         Text(""),
@@ -182,12 +209,11 @@ def process_ticket(
         if state.is_step_done(ticket.key, 2):
             tenant = state.get_tenant(ticket.key)
             if tenant is None:
-                # Fallback: state file missing tenant data — re-fetch
                 tenant = env_clients.pg.get_tenant(email_domain)
-            skip_step(2, 4, "PostgreSQL — Fetch Tenant")
+            skip_step(2, "PostgreSQL — Fetch Tenant")
         else:
             confirm_step(
-                2, 4, "PostgreSQL — Fetch Tenant",
+                2, "PostgreSQL — Fetch Tenant",
                 Syntax(
                     f'SELECT "id", "subscriberId", "name"\n'
                     f"FROM   public.tenant\n"
@@ -199,14 +225,83 @@ def process_ticket(
             state.mark_step_done(ticket.key, 2)
             state.save_tenant(ticket.key, tenant)
 
-        logger.info("[green]✓[/] Tenant — id=[bold]%s[/]  subscriberid=[bold]%s[/]", tenant.id, tenant.subscriberid)
+        logger.info(
+            "[green]✓[/] Tenant — id=[bold]%s[/]  subscriberid=[bold]%s[/]",
+            tenant.id, tenant.subscriberid,
+        )
 
-        # ── STEP 3 — PostgreSQL: apply updates (once per ticket) ───────
+        # ── STEP 3 — Create monitoring user (credentials) ──────────────
+        monitor_email = monitoring_email(email_domain)
+
         if state.is_step_done(ticket.key, 3):
-            skip_step(3, 4, "PostgreSQL — Apply Updates")
+            saved = state.get_monitoring_user(ticket.key)
+            skip_step(3, "PostgreSQL — Create Monitoring User")
+            if saved:
+                _, saved_pw = saved
+                console.print()
+                console.print(Panel(
+                    Group(
+                        Text(f"  Email:    {monitor_email}", style="cyan"),
+                        Text(f"  Password: {saved_pw}", style="bold yellow"),
+                    ),
+                    title="[dim] Monitoring user credentials (from previous run) [/]",
+                    border_style="dim",
+                ))
+        else:
+            # Fetch roles and groups for this tenant so we can show them in the preview
+            role_ids = env_clients.pg.get_tenant_role_ids(tenant.id)
+            group_ids = env_clients.pg.get_tenant_group_ids(tenant.id)
+            plaintext, password_hash = generate_password()
+
+            role_str  = "{" + ",".join(role_ids)  + "}" if role_ids  else "{}"
+            group_str = "{" + ",".join(group_ids) + "}" if group_ids else "{}"
+
+            confirm_step(
+                3, "PostgreSQL — Create Monitoring User",
+                Syntax(
+                    f'INSERT INTO public."user" (\n'
+                    f'    "firstname", "lastname", "username", "email", "password",\n'
+                    f'    "subscriberId", "tenantIds", "roleIds", "groupIds",\n'
+                    f'    "accountType", "status"\n'
+                    f') VALUES (\n'
+                    f"    'Quilr', 'Monitor', '{monitor_email}', '{monitor_email}', '<bcrypt>',\n"
+                    f"    '{tenant.subscriberid}', '{{{tenant.id}}}',\n"
+                    f"    '{role_str}', '{group_str}',\n"
+                    f"    'credentials', 'active'\n"
+                    f');',
+                    "sql", theme="monokai",
+                ),
+            )
+            created = env_clients.pg.create_monitoring_user(
+                monitor_email, tenant, password_hash, role_ids, group_ids
+            )
+            state.mark_step_done(ticket.key, 3)
+            state.save_monitoring_user(ticket.key, monitor_email, plaintext)
+
+            console.print()
+            if created:
+                console.print(Panel(
+                    Group(
+                        Text(f"  Email:    {monitor_email}", style="cyan"),
+                        Text(f"  Password: {plaintext}", style="bold yellow"),
+                    ),
+                    title="[bold yellow] ⚠  Save this password — it will not be shown again [/]",
+                    border_style="yellow",
+                    padding=(1, 2),
+                ))
+                logger.info("[green]✓[/] Monitoring user created: [cyan]%s[/]", monitor_email)
+            else:
+                logger.info(
+                    "[yellow]⚡[/] Monitoring user [cyan]%s[/] already existed — skipped",
+                    monitor_email,
+                )
+
+        # ── STEP 4 — PostgreSQL: apply updates (once per ticket) ───────
+        if state.is_step_done(ticket.key, 4):
+            skip_step(4, "PostgreSQL — Apply Updates")
         else:
             confirm_step(
-                3, 4, "PostgreSQL — Apply Updates",
+                4, "PostgreSQL — Apply Updates",
                 Syntax(
                     f"UPDATE public.tenant\n"
                     f'  SET "license_config" = \'{{"ai_axis_enabled": true}}\'\n'
@@ -221,16 +316,16 @@ def process_ticket(
                 ),
             )
             env_clients.pg.apply_onboarding_updates(email_domain)
-            state.mark_step_done(ticket.key, 3)
+            state.mark_step_done(ticket.key, 4)
 
         logger.info("[green]✓[/] PostgreSQL updates applied for [bold]%s[/]", email_domain)
 
-        # ── STEP 4 — Neo4j: MERGE tenant node (once per ticket) ────────
-        if state.is_step_done(ticket.key, 4):
-            skip_step(4, 4, "Neo4j — MERGE Tenant Node")
+        # ── STEP 5 — Neo4j: MERGE tenant node (once per ticket) ────────
+        if state.is_step_done(ticket.key, 5):
+            skip_step(5, "Neo4j — MERGE Tenant Node")
         else:
             confirm_step(
-                4, 4, "Neo4j — MERGE Tenant Node",
+                5, "Neo4j — MERGE Tenant Node",
                 Syntax(
                     f"MERGE (TENANT_0:TENANT {{\n"
                     f"  id:         '{tenant.id}',\n"
@@ -248,7 +343,7 @@ def process_ticket(
                 ),
             )
             env_clients.neo4j.merge_tenant(tenant)
-            state.mark_step_done(ticket.key, 4)
+            state.mark_step_done(ticket.key, 5)
 
         logger.info("[green]✓[/] Neo4j TENANT node merged for [bold]%s[/]", tenant.name)
 
@@ -261,13 +356,17 @@ def process_ticket(
             f"*Users onboarded:*\n{user_lines}\n\n"
             f"- Environment: {ticket.environment}\n"
             f"- Tenant ID: `{tenant.id}`\n"
-            f"- Subscriber ID: `{tenant.subscriberid}`"
+            f"- Subscriber ID: `{tenant.subscriberid}`\n"
+            f"- Monitoring user: `{monitor_email}`"
         )
         jira.add_comment(ticket.key, comment)
         jira.mark_done(ticket.key)
         state.mark_completed(ticket.key)
         console.print()
-        console.print(Rule(f"[bold green] ✓  {ticket.key} — {len(ticket.users)} user(s) completed [/]", style="green"))
+        console.print(Rule(
+            f"[bold green] ✓  {ticket.key} — {len(ticket.users)} user(s) completed [/]",
+            style="green",
+        ))
 
     except UserSkipped as exc:
         logger.warning("%s", exc)
@@ -293,7 +392,9 @@ def process_ticket(
 def main(ticket_key: Optional[str] = None) -> None:
     # Prompt interactively if no key supplied via CLI
     if not ticket_key:
-        raw = console.input("[bold]Enter Jira ticket ID[/] [dim](or press Enter for all open tickets)[/]: ").strip()
+        raw = console.input(
+            "[bold]Enter Jira ticket ID[/] [dim](or press Enter for all open tickets)[/]: "
+        ).strip()
         ticket_key = raw or None
 
     cfg = Config()
@@ -305,7 +406,10 @@ def main(ticket_key: Optional[str] = None) -> None:
         if ticket_key:
             ticket = jira.fetch_ticket(ticket_key)
             if not ticket:
-                logger.error("Could not parse [bold]%s[/] — check description and field config.", ticket_key)
+                logger.error(
+                    "Could not parse [bold]%s[/] — check description and field config.",
+                    ticket_key,
+                )
                 sys.exit(1)
             tickets = [ticket]
         else:
@@ -334,7 +438,10 @@ def main(ticket_key: Optional[str] = None) -> None:
 
         console.print()
         if failed:
-            console.print(Rule(f"[bold red] ✗  {len(failed)} ticket(s) failed: {', '.join(failed)} [/]", style="red"))
+            console.print(Rule(
+                f"[bold red] ✗  {len(failed)} ticket(s) failed: {', '.join(failed)} [/]",
+                style="red",
+            ))
             sys.exit(1)
         else:
             console.print(Rule("[bold green] ✓  All done [/]", style="green"))

@@ -106,6 +106,23 @@ class StateManager:
         self._save()
         logger.debug("State: %s marked completed", ticket_key)
 
+    # ── Monitoring user ────────────────────────────────────────────────
+
+    def save_monitoring_user(self, ticket_key: str, email: str, password: str) -> None:
+        """Persist the generated monitoring user credentials (plaintext stored locally)."""
+        self._state.setdefault(ticket_key, {})["monitoring_user"] = {
+            "email": email,
+            "password": password,
+        }
+        self._save()
+
+    def get_monitoring_user(self, ticket_key: str) -> tuple[str, str] | None:
+        """Return (email, plaintext_password) if previously saved, else None."""
+        raw = self._state.get(ticket_key, {}).get("monitoring_user")
+        if not raw:
+            return None
+        return raw["email"], raw["password"]
+
     # ── Info ───────────────────────────────────────────────────────────
 
     def get_steps_done(self, ticket_key: str) -> list[int]:

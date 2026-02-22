@@ -49,12 +49,83 @@ class PostgresClient:
     # Public API
     # ------------------------------------------------------------------
 
-    def user_exists(self, email: str) -> bool:
-        """Return True if the email already exists in the user table."""
-        sql = 'SELECT 1 FROM public."user" WHERE "email" = %s LIMIT 1'
+    def get_user_account_type(self, email: str) -> str | None:
+        """Return the accountType for the email if it exists in the user table, else None.
+
+        Known values: 'credentials' (internal user), 'OAuth' (SSO / external user).
+        Returns None when the email is not found (new user — safe to onboard).
+        """
+        sql = 'SELECT "accountType" FROM public."user" WHERE "email" = %s LIMIT 1'
         with self._conn.cursor() as cur:
             cur.execute(sql, (email,))
-            return cur.fetchone() is not None
+            row = cur.fetchone()
+            return row[0] if row else None
+
+    def get_tenant_role_ids(self, tenant_id: str) -> list[str]:
+        """Return all role IDs for the given tenant."""
+        sql = 'SELECT "id" FROM public.roles WHERE "tenantId" = %s::uuid AND "deletedAt" IS NULL'
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (tenant_id,))
+            return [str(r[0]) for r in cur.fetchall()]
+
+    def get_tenant_group_ids(self, tenant_id: str) -> list[str]:
+        """Return all group IDs for the given tenant."""
+        sql = 'SELECT "id" FROM public."group" WHERE "tenantId" = %s::uuid AND "deletedAt" IS NULL'
+        with self._conn.cursor() as cur:
+            cur.execute(sql, (tenant_id,))
+            return [str(r[0]) for r in cur.fetchall()]
+
+    def create_monitoring_user(
+        self,
+        email: str,
+        tenant: TenantRecord,
+        password_hash: str,
+        role_ids: list[str],
+        group_ids: list[str],
+    ) -> bool:
+        """Insert a credentials-type monitoring user for the tenant.
+
+        Returns True if created, False if the email already exists (idempotent).
+        """
+        check_sql = 'SELECT 1 FROM public."user" WHERE "email" = %s LIMIT 1'
+        with self._conn.cursor() as cur:
+            cur.execute(check_sql, (email,))
+            if cur.fetchone():
+                logger.info("Monitoring user '%s' already exists — skipping", email)
+                return False
+
+        insert_sql = """
+            INSERT INTO public."user" (
+                "firstname", "lastname", "username", "email", "password",
+                "subscriberId", "tenantIds", "roleIds", "groupIds",
+                "status", "verification_status", "createdby", "updatedby",
+                "createdon", "updatedon", "accountType", "emailSent"
+            )
+            VALUES (
+                'Quilr', 'Monitor', %s, %s, %s,
+                %s::uuid, %s, %s, %s,
+                'active', 'unverified', 'QOnboard', 'QOnboard',
+                NOW(), NOW(), 'credentials', FALSE
+            )
+        """
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(insert_sql, (
+                    email,
+                    email,
+                    password_hash,
+                    tenant.subscriberid,
+                    [tenant.id],
+                    role_ids,
+                    group_ids,
+                ))
+            self._conn.commit()
+            logger.info("Monitoring user '%s' created", email)
+            return True
+        except Exception:
+            self._conn.rollback()
+            logger.exception("Failed to create monitoring user '%s'", email)
+            raise
 
     def get_tenant(self, email_domain: str) -> TenantRecord:
         """Fetch id and subscriberid from tenant table for the given domain."""
