@@ -2,32 +2,32 @@
 Per-environment database configuration.
 
 Each Quilr environment has its own PostgreSQL and Neo4j instance.
-Settings are loaded from an isolated .env file so they never pollute os.environ.
+Settings are read from the SQLite config store (.qonboard.db).
 
-Expected keys in each env file:
-    PG_HOST, PG_PORT, PG_USER, PG_PASSWORD
-    NEO4J_HOST, NEO4J_PORT, NEO4J_USER, NEO4J_PASSWORD
+On first run the store auto-ingests from .env_* files in cwd.
+Use `qonboard config set KEY VALUE --env ENV_NAME` to update values.
+
+Expected keys per environment:
+    PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_DBNAME, PG_SSLMODE
+    NEO4J_HOST, NEO4J_PORT, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
-from dotenv import dotenv_values
 
-
-def _need(values: dict, key: str, file_path: str) -> str:
-    val = values.get(key, "").strip()
-    if not val:
+def _need(env_name: str, key: str, value: str | None) -> str:
+    if not value or not value.strip():
         raise EnvironmentError(
-            f"Required key '{key}' is missing or empty in '{file_path}'"
+            f"Required config key '{key}' is missing for environment '{env_name}'. "
+            f"Run 'qonboard config set {key} VALUE --env \"{env_name}\"' to set it."
         )
-    return val
+    return value.strip()
 
 
-def _opt(values: dict, key: str, default: str = "") -> str:
-    return values.get(key, default).strip()
+def _opt(value: str | None, default: str = "") -> str:
+    return value.strip() if value else default
 
 
 @dataclass(frozen=True)
@@ -51,30 +51,29 @@ class EnvDbConfig:
     neo4j_database: str
 
     @classmethod
-    def from_file(cls, env_name: str, file_path: str) -> "EnvDbConfig":
-        """Load config from an isolated dotenv file (does not touch os.environ)."""
-        if not os.path.isfile(file_path):
-            raise FileNotFoundError(
-                f"Environment config file not found: '{file_path}'"
-            )
-        v = dotenv_values(file_path)
+    def from_db(cls, env_name: str) -> "EnvDbConfig":
+        """Load config from the SQLite config store for the given environment."""
+        from .config_store import ConfigStore
 
-        neo4j_host = _need(v, "NEO4J_HOST", file_path)
-        neo4j_port = _opt(v, "NEO4J_PORT", "7687")
-        neo4j_uri = f"bolt://{neo4j_host}:{neo4j_port}"
+        store = ConfigStore.instance()
+        g = lambda k, default=None: store.get_env(env_name, k, default)  # noqa: E731
+
+        neo4j_host = _need(env_name, "NEO4J_HOST", g("NEO4J_HOST"))
+        neo4j_port = _opt(g("NEO4J_PORT"), "7687")
+        neo4j_uri  = f"bolt://{neo4j_host}:{neo4j_port}"
 
         return cls(
             env_name=env_name,
             # PostgreSQL
-            pg_host=_need(v, "PG_HOST", file_path),
-            pg_port=int(_opt(v, "PG_PORT", "5432")),
-            pg_dbname=_opt(v, "PG_DBNAME", "quilr_auth"),
-            pg_user=_need(v, "PG_USER", file_path),
-            pg_password=_need(v, "PG_PASSWORD", file_path),
-            pg_sslmode=_opt(v, "PG_SSLMODE", "require"),
+            pg_host    = _need(env_name, "PG_HOST",     g("PG_HOST")),
+            pg_port    = int(_opt(g("PG_PORT"), "5432")),
+            pg_dbname  = _opt(g("PG_DBNAME"),  "quilr_auth"),
+            pg_user    = _need(env_name, "PG_USER",     g("PG_USER")),
+            pg_password= _need(env_name, "PG_PASSWORD", g("PG_PASSWORD")),
+            pg_sslmode = _opt(g("PG_SSLMODE"), "require"),
             # Neo4j
-            neo4j_uri=neo4j_uri,
-            neo4j_username=_need(v, "NEO4J_USER", file_path),
-            neo4j_password=_need(v, "NEO4J_PASSWORD", file_path),
-            neo4j_database=_opt(v, "NEO4J_DATABASE", "neo4j"),
+            neo4j_uri      = neo4j_uri,
+            neo4j_username = _need(env_name, "NEO4J_USER",     g("NEO4J_USER")),
+            neo4j_password = _need(env_name, "NEO4J_PASSWORD", g("NEO4J_PASSWORD")),
+            neo4j_database = _opt(g("NEO4J_DATABASE"), "neo4j"),
         )

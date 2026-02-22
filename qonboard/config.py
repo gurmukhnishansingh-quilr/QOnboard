@@ -1,29 +1,30 @@
 """
-Central configuration loaded from environment variables / .env file.
+Central configuration — reads from the SQLite config store (.qonboard.db).
+
+On first run the store auto-ingests from .env in cwd.
+Use `qonboard config set KEY VALUE` to update values at any time.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 
-from dotenv import load_dotenv
-
-load_dotenv()
+from .config_store import ConfigStore
 
 
 def _require(key: str) -> str:
-    val = os.getenv(key, "").strip()
+    val = (ConfigStore.instance().get_global(key) or "").strip()
     if not val:
         raise EnvironmentError(
-            f"Required environment variable '{key}' is missing or empty. "
-            "Copy .env.example → .env and fill in your values."
+            f"Required config key '{key}' is missing or empty. "
+            "Run 'qonboard config init' to ingest from .env, "
+            "or 'qonboard config set KEY VALUE' to set it manually."
         )
     return val
 
 
 def _optional(key: str, default: str = "") -> str:
-    return os.getenv(key, default).strip()
+    return (ConfigStore.instance().get_global(key) or default).strip()
 
 
 @dataclass(frozen=True)
@@ -36,24 +37,20 @@ class Config:
     jira_issue_type: str = field(
         default_factory=lambda: _optional("JIRA_ISSUE_TYPE", "Customer Onboard")
     )
-    # Status names used to filter and transition issues
     jira_pending_status: str = field(
-        default_factory=lambda: _optional("JIRA_PENDING_STATUS", "Open")
+        default_factory=lambda: _optional("JIRA_PENDING_STATUS", "To Do")
     )
     jira_in_progress_status: str = field(
-        default_factory=lambda: _optional("JIRA_IN_PROGRESS_STATUS", "In Progress")
+        default_factory=lambda: _optional("JIRA_IN_PROGRESS_STATUS", "New Tenant")
     )
     jira_done_status: str = field(
-        default_factory=lambda: _optional("JIRA_DONE_STATUS", "Done")
+        default_factory=lambda: _optional("JIRA_DONE_STATUS", "Tenant Ready")
     )
-
-    # Custom field ID for the environment selector on the issue
     jira_field_environment: str = field(
-        default_factory=lambda: _optional("JIRA_FIELD_ENVIRONMENT", "customfield_10103")
+        default_factory=lambda: _optional("JIRA_FIELD_ENVIRONMENT", "customfield_10479")
     )
 
     # ── LLM (Azure OpenAI) ────────────────────────────────────────────
-    # Used to extract firstname / lastname / email from the ticket description
     azure_openai_api_key: str = field(
         default_factory=lambda: _require("AZURE_OPENAI_API_KEY")
     )
@@ -75,5 +72,4 @@ class Config:
         default_factory=lambda: int(_optional("API_TIMEOUT_SECONDS", "30"))
     )
 
-    # PostgreSQL and Neo4j are per-environment.
-    # See envs/.env.<env>.example for each environment's DB settings.
+    # PostgreSQL and Neo4j are per-environment — see env_config.py / config_store.py

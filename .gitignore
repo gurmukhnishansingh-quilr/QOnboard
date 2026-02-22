@@ -1,6 +1,7 @@
 .env
 .env_*
 .onboard_state.json
+.qonboard.db
 __pycache__/
 *.pyc
 *.egg-info/

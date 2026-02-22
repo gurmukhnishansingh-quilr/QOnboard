@@ -13,21 +13,23 @@ Jira ticket (Customer Onboard)
   LLM extracts users          ← Azure OpenAI function calling
   (firstname, lastname, email)
         │
-        ├─► [Step 1] POST /bff/auth/auth/onboard   (per new user, skips existing)
-        │
-        ├─► [Step 2] PostgreSQL SELECT tenant
-        │
-        ├─► [Step 3] PostgreSQL INSERT monitoring user (credentials / bcrypt)
-        │
-        ├─► [Step 4] PostgreSQL UPDATE tenant + subscriber
-        │
-        └─► [Step 5] Neo4j MERGE TENANT node
+        └─► For EACH environment (UAE POC, UAE PROD, IND POC, IND PROD, USA POC, USA PROD):
                 │
-                └─► Jira comment + transition to Tenant Ready
+                ├─► [Step 1] POST /bff/auth/auth/onboard   (per new user, skips existing)
+                │
+                ├─► [Step 2] PostgreSQL SELECT tenant
+                │
+                ├─► [Step 3] PostgreSQL INSERT monitoring user (credentials / bcrypt)
+                │
+                ├─► [Step 4] PostgreSQL UPDATE tenant + subscriber
+                │
+                └─► [Step 5] Neo4j MERGE TENANT node
+                        │
+                        └─► Jira comment + transition to Tenant Ready
 ```
 
 Each step shows a **syntax-highlighted preview** and asks **Y / N** before executing.
-Progress is saved after every step — if the agent is interrupted, restarting it **resumes from where it left off**.
+Progress is saved after every step per environment — if the agent is interrupted, restarting it **resumes from where it left off**.
 
 ---
 
@@ -55,9 +57,25 @@ This installs the `qonboard` command globally. For development (editable mode):
 pip install -e .
 ```
 
-### 2. Configure the main `.env`
+### 2. Configure
 
-Copy the example and fill in your values:
+QOnboard stores all configuration in a local SQLite database (`.qonboard.db`).
+On first run it **automatically ingests** from `.env` and `.env_*` files if they exist.
+
+You can also manage config directly:
+
+```bash
+qonboard config show                      # show all config values
+qonboard config show --env "UAE POC"      # show DB credentials for one environment
+qonboard config set JIRA_URL https://...  # update a global value
+qonboard config set PG_HOST my-host --env "IND POC"  # update an env value
+qonboard config init                      # re-ingest from .env files (skips existing)
+qonboard config init --force              # re-ingest and overwrite existing values
+```
+
+**Option A — via .env files (recommended for initial setup):**
+
+Copy the example and fill in your values, then run `qonboard config init`:
 
 ```bash
 cp .env.example .env
@@ -81,6 +99,14 @@ cp .env.example .env
 | `API_TIMEOUT_SECONDS` | | Default: `30` |
 
 > **Finding `JIRA_FIELD_ENVIRONMENT`**: Call `GET /rest/api/3/field` on your Jira instance and search for the field labelled *Environment*.
+
+**Option B — set values directly without .env files:**
+
+```bash
+qonboard config set JIRA_URL https://your-org.atlassian.net
+qonboard config set JIRA_USERNAME your@email.com
+# ... etc
+```
 
 ### 3. Configure per-environment databases
 
@@ -237,7 +263,7 @@ Once all five steps finish the ticket is marked **completed** in state and skipp
 ```
 QOnboard/
 ├── pyproject.toml         # Package metadata + qonboard CLI entry point
-├── .env.example           # Template — copy to .env
+├── .env.example           # Template — copy to .env (optional, for batch ingest)
 ├── envs/
 │   ├── .env.uae-poc.example
 │   ├── .env.ind-poc.example
@@ -247,10 +273,12 @@ QOnboard/
 └── qonboard/              # Installable Python package
     ├── __init__.py
     ├── __main__.py        # Enables python -m qonboard
-    ├── agent.py           # Entry point — orchestrates all 5 steps
-    ├── config.py          # Main .env config (Jira, Azure OpenAI, API)
-    ├── env_config.py      # Per-environment DB config loader
-    ├── state.py           # Step-level progress + monitoring user persistence
+    ├── agent.py           # Entry point — orchestrates all 5 steps across all environments
+    ├── config.py          # Jira + API config (reads from SQLite)
+    ├── config_store.py    # SQLite config store (.qonboard.db) — auto-ingests from .env files
+    ├── config_cli.py      # `qonboard config` subcommand handler
+    ├── env_config.py      # Per-environment DB config dataclass (reads from SQLite)
+    ├── state.py           # Step-level progress per ticket+environment (.onboard_state.json)
     ├── logger_setup.py    # Rich logging setup
     └── clients/
         ├── jira_client.py     # Jira REST API v3 (ADF parsing + ADF comment writing)
@@ -258,7 +286,7 @@ QOnboard/
         ├── onboard_api.py     # POST /bff/auth/auth/onboard
         ├── postgres_client.py # quilr_auth DB — tenant, user, roles, groups queries + updates
         ├── neo4j_client.py    # MERGE TENANT node
-        └── env_registry.py    # Lazily wires DB clients per environment
+        └── env_registry.py    # Lazily wires DB clients per environment (via SQLite config)
 ```
 
 ---
