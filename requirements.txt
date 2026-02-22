@@ -1,0 +1,7 @@
+rich==13.9.4
+openai==1.55.3
+jira==3.8.0
+requests==2.32.3
+psycopg2-binary==2.9.10
+neo4j==5.18.0
+python-dotenv==1.0.1
