@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 
 from neo4j import GraphDatabase, Driver
 
-from env_config import EnvDbConfig
-from clients.postgres_client import TenantRecord
+from ..env_config import EnvDbConfig
+from .postgres_client import TenantRecord
 
 logger = logging.getLogger(__name__)
 

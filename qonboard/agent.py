@@ -2,8 +2,9 @@
 Quilr Customer Onboarding Agent
 ================================
 Usage:
-    python agent.py            # prompts for ticket ID, or processes all open tickets
-    python agent.py OPS-123    # processes a specific ticket directly
+    qonboard                   # prompts for ticket ID, or processes all open tickets
+    qonboard OPS-123           # processes a specific ticket directly
+    python -m qonboard OPS-123 # alternative without installing
 
 Progress is saved to .onboard_state.json after each step.  If the agent is
 restarted mid-ticket it will skip already-completed steps and resume from
@@ -28,12 +29,12 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from logger_setup import setup_logging, console
-from config import Config
-from clients.jira_client import JiraClient, OnboardTicket
-from clients.onboard_api import call_onboard_api_for_user, resolve_domain
-from clients.env_registry import EnvRegistry
-from state import StateManager
+from .logger_setup import setup_logging, console
+from .config import Config
+from .clients.jira_client import JiraClient, OnboardTicket
+from .clients.onboard_api import call_onboard_api_for_user, resolve_domain
+from .clients.env_registry import EnvRegistry
+from .state import StateManager
 
 setup_logging()
 logger = logging.getLogger("agent")

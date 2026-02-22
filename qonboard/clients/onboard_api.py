@@ -8,8 +8,8 @@ import logging
 
 import requests
 
-from config import Config
-from clients.extractor import ExtractedDetails
+from ..config import Config
+from .extractor import ExtractedDetails
 
 logger = logging.getLogger(__name__)
 

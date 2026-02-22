@@ -2,7 +2,7 @@
 Persistent state manager — tracks which onboarding steps have been
 completed for each Jira ticket so restarts can resume where they left off.
 
-State file: .onboard_state.json  (next to the script, git-ignored)
+State file: .onboard_state.json  (in the current working directory, git-ignored)
 
 Structure:
 {
@@ -23,11 +23,12 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from clients.postgres_client import TenantRecord
+from .clients.postgres_client import TenantRecord
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = Path(__file__).parent / ".onboard_state.json"
+# Resolved at runtime so it always sits next to where the user runs the command
+_DEFAULT_PATH = Path.cwd() / ".onboard_state.json"
 
 
 class StateManager:

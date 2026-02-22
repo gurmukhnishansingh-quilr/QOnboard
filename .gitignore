@@ -3,3 +3,6 @@
 .onboard_state.json
 __pycache__/
 *.pyc
+*.egg-info/
+dist/
+build/

@@ -46,7 +46,13 @@ Progress is saved after every step — if the agent is interrupted, restarting i
 ```bash
 git clone git@github.com:gurmukhnishansingh-quilr/QOnboard.git
 cd QOnboard
-pip install -r requirements.txt
+pip install .
+```
+
+This installs the `qonboard` command globally. For development (editable mode):
+
+```bash
+pip install -e .
 ```
 
 ### 2. Configure the main `.env`
@@ -121,21 +127,27 @@ NEO4J_DATABASE=neo4j         # default
 ### Process a specific ticket
 
 ```bash
-python agent.py OPS-123
+qonboard OPS-123
 ```
 
 ### Prompt for ticket ID interactively
 
 ```bash
-python agent.py
+qonboard
 # Enter Jira ticket ID (or press Enter for all open tickets):
 ```
 
 ### Process all open tickets
 
 ```bash
-python agent.py
+qonboard
 # (press Enter at the prompt)
+```
+
+### Without installing (module mode)
+
+```bash
+python -m qonboard OPS-123
 ```
 
 ---
@@ -224,12 +236,7 @@ Once all five steps finish the ticket is marked **completed** in state and skipp
 
 ```
 QOnboard/
-├── agent.py               # Entry point — orchestrates all 5 steps
-├── config.py              # Main .env config (Jira, Azure OpenAI, API)
-├── env_config.py          # Per-environment DB config loader
-├── state.py               # Step-level progress + monitoring user persistence
-├── logger_setup.py        # Rich logging setup
-├── requirements.txt
+├── pyproject.toml         # Package metadata + qonboard CLI entry point
 ├── .env.example           # Template — copy to .env
 ├── envs/
 │   ├── .env.uae-poc.example
@@ -237,13 +244,21 @@ QOnboard/
 │   ├── .env.ind-prod.example
 │   ├── .env.usa-poc.example
 │   └── .env.usa-prod.example
-└── clients/
-    ├── jira_client.py     # Jira REST API v3 (ADF parsing + ADF comment writing)
-    ├── extractor.py       # Azure OpenAI function calling — extracts users from description
-    ├── onboard_api.py     # POST /bff/auth/auth/onboard
-    ├── postgres_client.py # quilr_auth DB — tenant, user, roles, groups queries + updates
-    ├── neo4j_client.py    # MERGE TENANT node
-    └── env_registry.py    # Lazily wires DB clients per environment
+└── qonboard/              # Installable Python package
+    ├── __init__.py
+    ├── __main__.py        # Enables python -m qonboard
+    ├── agent.py           # Entry point — orchestrates all 5 steps
+    ├── config.py          # Main .env config (Jira, Azure OpenAI, API)
+    ├── env_config.py      # Per-environment DB config loader
+    ├── state.py           # Step-level progress + monitoring user persistence
+    ├── logger_setup.py    # Rich logging setup
+    └── clients/
+        ├── jira_client.py     # Jira REST API v3 (ADF parsing + ADF comment writing)
+        ├── extractor.py       # Azure OpenAI function calling — extracts users from description
+        ├── onboard_api.py     # POST /bff/auth/auth/onboard
+        ├── postgres_client.py # quilr_auth DB — tenant, user, roles, groups queries + updates
+        ├── neo4j_client.py    # MERGE TENANT node
+        └── env_registry.py    # Lazily wires DB clients per environment
 ```
 
 ---

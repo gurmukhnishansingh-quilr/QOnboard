@@ -17,8 +17,8 @@ import re
 from dataclasses import dataclass
 from jira import JIRA, Issue
 
-from config import Config
-from clients.extractor import extract_customer_details, AzureOpenAIConfig, ExtractedDetails
+from ..config import Config
+from .extractor import extract_customer_details, AzureOpenAIConfig, ExtractedDetails
 
 logger = logging.getLogger(__name__)
 

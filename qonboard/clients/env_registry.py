@@ -8,21 +8,18 @@ Each environment has its own config file under envs/.
 from __future__ import annotations
 
 import logging
-import os
+from pathlib import Path
 from typing import NamedTuple
 
-from env_config import EnvDbConfig
-from clients.postgres_client import PostgresClient
-from clients.neo4j_client import Neo4jClient
+from ..env_config import EnvDbConfig
+from .postgres_client import PostgresClient
+from .neo4j_client import Neo4jClient
 
 logger = logging.getLogger(__name__)
 
-# Root of the project (one level up from clients/)
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
+# Resolved at runtime — env files live next to where the user runs the command
 def _env_file(filename: str) -> str:
-    return os.path.join(_PROJECT_ROOT, filename)
+    return str(Path.cwd() / filename)
 
 
 # Maps Jira environment field value → .env file in the project root

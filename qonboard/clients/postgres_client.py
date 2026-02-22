@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import psycopg2
 import psycopg2.extras
 
-from env_config import EnvDbConfig
+from ..env_config import EnvDbConfig
 
 logger = logging.getLogger(__name__)
 
