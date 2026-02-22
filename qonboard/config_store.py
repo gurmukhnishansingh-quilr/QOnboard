@@ -1,10 +1,17 @@
 """
 SQLite-backed configuration store for QOnboard.
 
-DB file: .qonboard.db  (in the current working directory, git-ignored)
+DB file: <AppData>/QOnboard/config.db
+  - Windows : %APPDATA%\\QOnboard\\config.db
+  - macOS   : ~/Library/Application Support/QOnboard/config.db
+  - Linux   : ~/.local/share/QOnboard/config.db
+
+Stored in the OS user-data directory so it persists across working directories
+and is shared by every `qonboard` invocation on the machine.
 
 On first use the store auto-ingests from any .env / .env_* files it finds in
-the current directory so the user doesn't need to do anything special.
+the *current working directory* so the user doesn't need to do anything special
+when setting up from an existing project.
 Values can be updated at any time with `qonboard config set`.
 
 Tables
@@ -22,12 +29,29 @@ UAE POC and UAE PROD share .env_uae because they run on the same infrastructure.
 from __future__ import annotations
 
 import logging
+import os
+import platform
 import sqlite3
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path.cwd() / ".qonboard.db"
+
+def _app_data_dir() -> Path:
+    """Return the OS-appropriate user-data directory for QOnboard."""
+    system = platform.system()
+    if system == "Windows":
+        base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    elif system == "Darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    app_dir = base / "QOnboard"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    return app_dir
+
+
+_DEFAULT_DB_PATH = _app_data_dir() / "config.db"
 
 # Jira environment name → local .env filename
 ENV_FILE_MAP: dict[str, str] = {
