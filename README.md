@@ -17,9 +17,11 @@ Jira ticket (Customer Onboard)
         │
         ├─► [Step 2] PostgreSQL SELECT tenant
         │
-        ├─► [Step 3] PostgreSQL UPDATE tenant + subscriber
+        ├─► [Step 3] PostgreSQL INSERT monitoring user (credentials / bcrypt)
         │
-        └─► [Step 4] Neo4j MERGE TENANT node
+        ├─► [Step 4] PostgreSQL UPDATE tenant + subscriber
+        │
+        └─► [Step 5] Neo4j MERGE TENANT node
                 │
                 └─► Jira comment + transition to Tenant Ready
 ```
@@ -148,7 +150,7 @@ python agent.py
 │          User 2   Bob Jones      bob@acme.com             │
 ╰───────────────────────────────────────────────────────────╯
 
-╭── STEP 1/4 — Onboard API (2 new user(s)) ─────────────────╮
+╭── STEP 1/5 — Onboard API (2 new user(s)) ─────────────────╮
 │  POST  https://trust.quilr.ai/bff/auth/auth/onboard       │
 │                                                           │
 │  [1]  alice@acme.com   Alice Smith                        │
@@ -157,8 +159,33 @@ python agent.py
   Proceed? [y/n]
 ```
 
-- **Y** — executes the step and moves to the next
-- **N** — skips the step, adds a pause comment to Jira, stops the ticket
+Users already present in the `user` table are automatically skipped:
+
+- `credentials` account → **internal user**, API call skipped
+- `OAuth` account → **already onboarded**, API call skipped
+
+Step 1 lists both new and skipped users before asking for confirmation.
+
+After Step 2 fetches the tenant, **Step 3** creates a monitoring user:
+
+```
+╭── STEP 3/5 — PostgreSQL — Create Monitoring User ─────────╮
+│  INSERT INTO public."user" (                              │
+│      "email", "accountType", "roleIds", "groupIds", ...  │
+│  ) VALUES (                                               │
+│      'monitor+acme@quilr.ai', 'credentials', ...         │
+│  );                                                       │
+╰───────────────────────────────────────────────────────────╯
+  Proceed? [y/n]
+
+  ╔══════════════════════════════════════════════════════╗
+  ║ ⚠  Save this password — it will not be shown again  ║
+  ║  Email:    monitor+acme@quilr.ai                    ║
+  ║  Password: <generated>                              ║
+  ╚══════════════════════════════════════════════════════╝
+```
+
+The monitoring user is assigned the tenant's existing roles and groups from `public.roles` and `public.group`. The password is auto-generated, bcrypt-hashed before storage, and saved locally to `.onboard_state.json` in case you need to retrieve it later.
 
 On completion, a summary comment is posted to the Jira ticket and it is transitioned to **Tenant Ready**.
 
@@ -169,13 +196,14 @@ On completion, a summary comment is posted to the Jira ticket and it is transiti
 Progress is saved to `.onboard_state.json` after each step. If the agent crashes or you press Ctrl-C mid-run, simply re-run the same command — already-completed steps are shown as:
 
 ```
-─────  ✓  Step 1/4 — Onboard API — already completed  ─────
-─────  ✓  Step 2/4 — PostgreSQL — Fetch Tenant — already completed  ─────
+─────  ✓  Step 1/5 — Onboard API — already completed  ─────
+─────  ✓  Step 2/5 — PostgreSQL — Fetch Tenant — already completed  ─────
+─────  ✓  Step 3/5 — PostgreSQL — Create Monitoring User — already completed  ─────
 ```
 
-and the agent continues from the first incomplete step.
+and the agent continues from the first incomplete step. The monitoring user password is also re-displayed from state so it is never lost.
 
-Once all four steps finish the ticket is marked **completed** in state and skipped on any future run.
+Once all five steps finish the ticket is marked **completed** in state and skipped on any future run.
 
 ---
 
@@ -196,10 +224,10 @@ Once all four steps finish the ticket is marked **completed** in state and skipp
 
 ```
 QOnboard/
-├── agent.py               # Entry point — orchestrates all steps
+├── agent.py               # Entry point — orchestrates all 5 steps
 ├── config.py              # Main .env config (Jira, Azure OpenAI, API)
 ├── env_config.py          # Per-environment DB config loader
-├── state.py               # Step-level progress persistence
+├── state.py               # Step-level progress + monitoring user persistence
 ├── logger_setup.py        # Rich logging setup
 ├── requirements.txt
 ├── .env.example           # Template — copy to .env
@@ -213,7 +241,7 @@ QOnboard/
     ├── jira_client.py     # Jira REST API v3 (ADF parsing + ADF comment writing)
     ├── extractor.py       # Azure OpenAI function calling — extracts users from description
     ├── onboard_api.py     # POST /bff/auth/auth/onboard
-    ├── postgres_client.py # quilr_auth DB — tenant SELECT + UPDATE, user existence check
+    ├── postgres_client.py # quilr_auth DB — tenant, user, roles, groups queries + updates
     ├── neo4j_client.py    # MERGE TENANT node
     └── env_registry.py    # Lazily wires DB clients per environment
 ```
@@ -227,6 +255,7 @@ QOnboard/
 | `Required environment variable 'X' is missing` | Copy `.env.example` → `.env` and fill in the value |
 | `Environment config file not found: '.env_uae'` | Copy `envs/.env.uae-poc.example` → `.env_uae` and fill in DB credentials |
 | `Unknown environment 'XYZ'` | The Jira environment field has an unexpected value — check `JIRA_FIELD_ENVIRONMENT` and the field value on the ticket |
-| `No tenant found … with name = 'domain.com'` | The tenant row does not exist in PostgreSQL yet — check the `quilr_auth.public.tenant` table |
+| `No tenant found … with name = 'domain.com'` | The tenant row does not exist in `quilr_auth.public.tenant` yet |
 | `JiraError HTTP 400 — Comment body is not valid` | Jira API v3 requires ADF bodies — already handled; check you are on `jira>=3.8.0` |
-| `No transition named 'X' found` | Run the agent with a test ticket and inspect the log for available transitions, then update `JIRA_IN_PROGRESS_STATUS` / `JIRA_DONE_STATUS` in `.env` |
+| `No transition named 'X' found` | Inspect available transitions via the Jira API and update `JIRA_IN_PROGRESS_STATUS` / `JIRA_DONE_STATUS` in `.env` |
+| Monitoring user password lost | Re-run the agent on the same ticket — if Step 3 is already done the password is shown from `.onboard_state.json` |
