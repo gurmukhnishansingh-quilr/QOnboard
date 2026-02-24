@@ -373,89 +373,72 @@ def process_ticket(
     info.add_column(style="dim")
     info.add_column()
     info.add_row("Ticket", f"[bold blue]{ticket.key}[/] — {ticket.summary}")
+    info.add_row("Env",    f"[bold green]{ticket.environment}[/]")
     info.add_row("Users",  user_table)
     console.print()
     console.print(Panel(info, border_style="blue", title="[bold blue] Customer Onboarding [/]"))
+
+    env_name = ticket.environment
 
     jira.mark_in_progress(ticket.key)
 
     email_domain = extract_email_domain(ticket.users[0].email)
 
-    # ── Monitoring password (ticket-level, shared across all envs) ─────
+    # ── Monitoring password (ticket-level) ─────────────────────────────
     monitor_pw_plaintext = state.get_monitor_password(ticket.key)
     if monitor_pw_plaintext is None:
         monitor_pw_plaintext, _ = generate_password()
         state.save_monitor_password(ticket.key, monitor_pw_plaintext)
 
-    failed_envs: list[str] = []
-
-    for env_name in _ALL_ENV_NAMES:
-        if state.is_env_completed(ticket.key, env_name):
-            console.print()
-            console.print(Rule(
-                f"[dim] ✓  {env_name} — already completed, skipping [/]",
-                style="dim green",
-            ))
-            continue
-
-        try:
-            process_env(
-                ticket, env_name, email_domain, monitor_pw_plaintext,
-                registry, cfg, state,
-            )
-        except UserSkipped as exc:
-            logger.warning("%s", exc)
-        except Exception as exc:
-            logger.error(
-                "[red]✗[/] Failed to process [bold]%s[/] / [bold]%s[/]: %s",
-                ticket.key, env_name, exc,
-            )
-            logger.debug(traceback.format_exc())
-            failed_envs.append(env_name)
-
-    # ── Wrap up ────────────────────────────────────────────────────────
-    completed_envs = [e for e in _ALL_ENV_NAMES if state.is_env_completed(ticket.key, e)]
-
-    if not completed_envs:
-        # Nothing finished — don't post to Jira
+    if state.is_env_completed(ticket.key, env_name):
+        console.print()
+        console.print(Rule(
+            f"[dim] ✓  {env_name} — already completed, skipping [/]",
+            style="dim green",
+        ))
         return
 
+    try:
+        process_env(
+            ticket, env_name, email_domain, monitor_pw_plaintext,
+            registry, cfg, state,
+        )
+    except UserSkipped as exc:
+        logger.warning("%s", exc)
+        jira.add_comment(ticket.key, f"Onboarding paused — {exc}")
+        return
+    except Exception as exc:
+        logger.error(
+            "[red]✗[/] Failed to process [bold]%s[/] / [bold]%s[/]: %s",
+            ticket.key, env_name, exc,
+        )
+        logger.debug(traceback.format_exc())
+        jira.add_comment(
+            ticket.key,
+            f"*Onboarding failed for {env_name} — manual intervention required.*\n\n"
+            f"{{code}}\n{traceback.format_exc()}\n{{code}}",
+        )
+        raise
+
+    # ── Wrap up ────────────────────────────────────────────────────────
     monitor_email_addr = monitoring_email(email_domain)
     user_lines = "\n".join(
         f"  - {u.firstname} {u.lastname} `{u.email}`" for u in ticket.users
     )
-    env_lines = "\n".join(f"  - {e}" for e in completed_envs)
     comment = (
         f"*Onboarding completed.*\n\n"
         f"*Users onboarded:*\n{user_lines}\n\n"
-        f"*Environments processed:*\n{env_lines}\n\n"
+        f"- Environment: {env_name}\n"
         f"- Monitoring user: `{monitor_email_addr}`"
     )
-
-    if failed_envs:
-        comment += f"\n\n*Failed environments (manual intervention required):* {', '.join(failed_envs)}"
-
     jira.add_comment(ticket.key, comment)
-
-    if state.is_completed(ticket.key, _ALL_ENV_NAMES):
-        jira.mark_done(ticket.key)
-        state.mark_completed(ticket.key)
-        console.print()
-        console.print(Rule(
-            f"[bold green] ✓  {ticket.key} — all environments completed [/]",
-            style="green",
-        ))
-    else:
-        console.print()
-        console.print(Rule(
-            f"[bold yellow] ⏸  {ticket.key} — partial: {len(completed_envs)}/{len(_ALL_ENV_NAMES)} envs done [/]",
-            style="yellow",
-        ))
-
-    if failed_envs:
-        raise RuntimeError(
-            f"{ticket.key}: {len(failed_envs)} environment(s) failed: {', '.join(failed_envs)}"
-        )
+    jira.mark_done(ticket.key)
+    state.mark_completed(ticket.key)
+    console.print()
+    console.print(Rule(
+        f"[bold green] ✓  {ticket.key} — {env_name} completed [/]",
+        style="green",
+    ))
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -536,13 +519,13 @@ def main() -> None:
 
         console.print()
         console.print(Rule(
-            f"[bold] Processing {len(tickets)} ticket(s) across {len(_ALL_ENV_NAMES)} environment(s) [/]",
+            f"[bold] Processing {len(tickets)} ticket(s) [/]",
             style="blue",
         ))
 
         failed: list[str] = []
         for ticket in tickets:
-            if state.is_completed(ticket.key, _ALL_ENV_NAMES):
+            if state.is_completed(ticket.key, [ticket.environment]):
                 console.print()
                 console.print(Rule(
                     f"[dim] ✓  {ticket.key} — already fully onboarded, skipping [/]",
