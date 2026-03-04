@@ -1,6 +1,6 @@
 # QOnboard
 
-> Quilr customer onboarding agent — fetches a Jira ticket, extracts user details with an LLM, and wires everything up across the Onboard API, PostgreSQL, and Neo4j in one guided run.
+> Quilr customer onboarding agent — fetches a Jira ticket, extracts user details with an LLM, and wires everything up across the Onboard API, PostgreSQL, Neo4j, and the domain registry in one guided run.
 
 ---
 
@@ -13,7 +13,7 @@ Jira ticket (Customer Onboard)
   LLM extracts users          ← Azure OpenAI function calling
   (firstname, lastname, email)
         │
-        └─► For EACH environment (UAE POC, UAE PROD, IND POC, IND PROD, USA POC, USA PROD):
+        └─► For the environment specified on the ticket (e.g. UAE POC):
                 │
                 ├─► [Step 1] POST /bff/auth/auth/onboard   (per new user, skips existing)
                 │
@@ -23,13 +23,16 @@ Jira ticket (Customer Onboard)
                 │
                 ├─► [Step 4] PostgreSQL UPDATE tenant + subscriber
                 │
-                └─► [Step 5] Neo4j MERGE TENANT node
+                ├─► [Step 5] Neo4j MERGE TENANT node
+                │
+                └─► [Step 6] Register org domain (login → JWT → add-domain API)
                         │
                         └─► Jira comment + transition to Tenant Ready
+                                + Summary panel (tenant ID, monitor credentials)
 ```
 
 Each step shows a **syntax-highlighted preview** and asks **Y / N** before executing.
-Progress is saved after every step per environment — if the agent is interrupted, restarting it **resumes from where it left off**.
+Progress is saved after every step — if the agent is interrupted, restarting it **resumes from where it left off**.
 
 ---
 
@@ -59,7 +62,7 @@ pip install -e .
 
 ### 2. Configure
 
-QOnboard stores all configuration in a local SQLite database (`.qonboard.db`).
+QOnboard stores all configuration in a SQLite database at `%APPDATA%\QOnboard\config.db` (Windows) or `~/.local/share/QOnboard/config.db` (Linux/macOS).
 On first run it **automatically ingests** from `.env` and `.env_*` files if they exist.
 
 You can also manage config directly:
@@ -188,7 +191,7 @@ python -m qonboard OPS-123
 │          User 2   Bob Jones      bob@acme.com             │
 ╰───────────────────────────────────────────────────────────╯
 
-╭── STEP 1/5 — Onboard API (2 new user(s)) ─────────────────╮
+╭── STEP 1/6 — Onboard API (2 new user(s)) ─────────────────╮
 │  POST  https://trust.quilr.ai/bff/auth/auth/onboard       │
 │                                                           │
 │  [1]  alice@acme.com   Alice Smith                        │
@@ -207,7 +210,7 @@ Step 1 lists both new and skipped users before asking for confirmation.
 After Step 2 fetches the tenant, **Step 3** creates a monitoring user:
 
 ```
-╭── STEP 3/5 — PostgreSQL — Create Monitoring User ─────────╮
+╭── STEP 3/6 — PostgreSQL — Create Monitoring User ─────────╮
 │  INSERT INTO public."user" (                              │
 │      "email", "accountType", "roleIds", "groupIds", ...  │
 │  ) VALUES (                                               │
@@ -223,9 +226,26 @@ After Step 2 fetches the tenant, **Step 3** creates a monitoring user:
   ╚══════════════════════════════════════════════════════╝
 ```
 
-The monitoring user is assigned the tenant's existing roles and groups from `public.roles` and `public.group`. The password is auto-generated, bcrypt-hashed before storage, and saved locally to `.onboard_state.json` in case you need to retrieve it later.
+The monitoring user is assigned the tenant's existing roles and groups from `public.roles` and `public.group`. The password is auto-generated, bcrypt-hashed before storage, and saved locally to `.onboard_state.json`.
 
-On completion, a summary comment is posted to the Jira ticket and it is transitioned to **Tenant Ready**.
+**Step 5** merges the tenant into Neo4j, including a `name` property derived from the email domain with the TLD stripped (e.g. `acme.com` → `acme`).
+
+**Step 6** uses the monitoring user's credentials to log in and obtain a short-lived JWT, then registers the org domain via the domain management API.
+
+On completion, a **summary panel** is printed and a comment is posted to the Jira ticket before it transitions to **Tenant Ready**:
+
+```
+╭────────────────── Onboarding Complete ──────────────────╮
+│                                                         │
+│  Ticket         PMM-4916                                │
+│  Environment    UAE POC                                 │
+│  Tenant ID      <uuid>                                  │
+│  Subscriber ID  <uuid>                                  │
+│  Monitor email  monitor+acme@quilr.ai                   │
+│  Monitor pass   <generated password>                    │
+│                                                         │
+╰─────────────────────────────────────────────────────────╯
+```
 
 ---
 
@@ -234,14 +254,14 @@ On completion, a summary comment is posted to the Jira ticket and it is transiti
 Progress is saved to `.onboard_state.json` after each step. If the agent crashes or you press Ctrl-C mid-run, simply re-run the same command — already-completed steps are shown as:
 
 ```
-─────  ✓  Step 1/5 — Onboard API — already completed  ─────
-─────  ✓  Step 2/5 — PostgreSQL — Fetch Tenant — already completed  ─────
-─────  ✓  Step 3/5 — PostgreSQL — Create Monitoring User — already completed  ─────
+─────  OK  Step 1/6 — Onboard API — already completed  ─────
+─────  OK  Step 2/6 — PostgreSQL — Fetch Tenant — already completed  ─────
+─────  OK  Step 3/6 — PostgreSQL — Create Monitoring User — already completed  ─────
 ```
 
 and the agent continues from the first incomplete step. The monitoring user password is also re-displayed from state so it is never lost.
 
-Once all five steps finish the ticket is marked **completed** in state and skipped on any future run.
+Once all six steps finish the ticket is marked **completed** in state and skipped on any future run.
 
 ---
 
@@ -255,6 +275,8 @@ Once all five steps finish the ticket is marked **completed** in state and skipp
 | `IND PROD` | `platform.quilrai.com` |
 | `USA POC` | `app.quilr.ai` |
 | `USA PROD` | `app.quilrai.com` |
+
+The agent reads the environment from the Jira ticket's environment field and processes **only that environment**.
 
 ---
 
@@ -273,9 +295,9 @@ QOnboard/
 └── qonboard/              # Installable Python package
     ├── __init__.py
     ├── __main__.py        # Enables python -m qonboard
-    ├── agent.py           # Entry point — orchestrates all 5 steps across all environments
+    ├── agent.py           # Entry point — orchestrates all 6 steps for the ticket environment
     ├── config.py          # Jira + API config (reads from SQLite)
-    ├── config_store.py    # SQLite config store (.qonboard.db) — auto-ingests from .env files
+    ├── config_store.py    # SQLite config store (AppData/QOnboard/config.db) — auto-ingests from .env files
     ├── config_cli.py      # `qonboard config` subcommand handler
     ├── env_config.py      # Per-environment DB config dataclass (reads from SQLite)
     ├── state.py           # Step-level progress per ticket+environment (.onboard_state.json)
@@ -285,7 +307,8 @@ QOnboard/
         ├── extractor.py       # Azure OpenAI function calling — extracts users from description
         ├── onboard_api.py     # POST /bff/auth/auth/onboard
         ├── postgres_client.py # quilr_auth DB — tenant, user, roles, groups queries + updates
-        ├── neo4j_client.py    # MERGE TENANT node
+        ├── neo4j_client.py    # MERGE TENANT node (with name property, TLD stripped)
+        ├── domain_api.py      # Login → JWT, then POST org-domains/add
         └── env_registry.py    # Lazily wires DB clients per environment (via SQLite config)
 ```
 
@@ -301,4 +324,5 @@ QOnboard/
 | `No tenant found … with name = 'domain.com'` | The tenant row does not exist in `quilr_auth.public.tenant` yet |
 | `JiraError HTTP 400 — Comment body is not valid` | Jira API v3 requires ADF bodies — already handled; check you are on `jira>=3.8.0` |
 | `No transition named 'X' found` | Inspect available transitions via the Jira API and update `JIRA_IN_PROGRESS_STATUS` / `JIRA_DONE_STATUS` in `.env` |
+| `No token in login response` | The monitoring user login failed — verify the user was created in Step 3 and the domain is correct |
 | Monitoring user password lost | Re-run the agent on the same ticket — if Step 3 is already done the password is shown from `.onboard_state.json` |
