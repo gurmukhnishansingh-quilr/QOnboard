@@ -327,12 +327,12 @@ def process_env(
                 f"  tenant:     '{tenant.id}'\n"
                 f"}})\n"
                 f"ON CREATE SET\n"
-                f"  TENANT_0.name         = '{tenant.name}',\n"
+                f"  TENANT_0.name         = '{tenant.name.rsplit(\".\", 1)[0]}',\n"
                 f"  TENANT_0.creationTime = <now>,\n"
                 f"  TENANT_0.internalId   = randomUUID(),\n"
                 f"  TENANT_0.new          = true\n"
                 f"ON MATCH SET\n"
-                f"  TENANT_0.name         = '{tenant.name}',\n"
+                f"  TENANT_0.name         = '{tenant.name.rsplit(\".\", 1)[0]}',\n"
                 f"  TENANT_0.new          = false,\n"
                 f"  TENANT_0.timestamp    = timestamp()",
                 "cypher", theme="monokai",

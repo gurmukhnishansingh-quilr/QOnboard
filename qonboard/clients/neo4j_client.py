@@ -59,7 +59,7 @@ class Neo4jClient:
             "TENANT_0_id": tenant.id,
             "TENANT_0_subscriber": tenant.subscriberid,
             "TENANT_0_tenant": tenant.id,
-            "TENANT_0_name": tenant.name,
+            "TENANT_0_name": tenant.name.rsplit(".", 1)[0],
             "TENANT_0_creationTime": datetime.now(tz=timezone.utc).isoformat(),
         }
 
