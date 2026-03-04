@@ -455,6 +455,8 @@ def process_ticket(
 
     # ── Wrap up ────────────────────────────────────────────────────────
     monitor_email_addr = monitoring_email(email_domain)
+    tenant = state.get_tenant(ticket.key, env_name)
+
     user_lines = "\n".join(
         f"  - {u.firstname} {u.lastname} `{u.email}`" for u in ticket.users
     )
@@ -462,15 +464,31 @@ def process_ticket(
         f"*Onboarding completed.*\n\n"
         f"*Users onboarded:*\n{user_lines}\n\n"
         f"- Environment: {env_name}\n"
+        f"- Tenant ID: `{tenant.id}`\n"
+        f"- Subscriber ID: `{tenant.subscriberid}`\n"
         f"- Monitoring user: `{monitor_email_addr}`"
     )
     jira.add_comment(ticket.key, comment)
     jira.mark_done(ticket.key)
     state.mark_completed(ticket.key)
+
+    # ── Summary panel ──────────────────────────────────────────────────
+    summary = Table(box=None, padding=(0, 2), show_header=False)
+    summary.add_column(style="dim", no_wrap=True)
+    summary.add_column()
+    summary.add_row("Ticket",        f"[bold blue]{ticket.key}[/]")
+    summary.add_row("Environment",   f"[bold green]{env_name}[/]")
+    summary.add_row("Tenant ID",     f"[cyan]{tenant.id}[/]")
+    summary.add_row("Subscriber ID", f"[cyan]{tenant.subscriberid}[/]")
+    summary.add_row("Monitor email", f"[cyan]{monitor_email_addr}[/]")
+    summary.add_row("Monitor pass",  f"[bold yellow]{monitor_pw_plaintext}[/]")
+
     console.print()
-    console.print(Rule(
-        f"[bold green] ✓  {ticket.key} — {env_name} completed [/]",
-        style="green",
+    console.print(Panel(
+        summary,
+        title="[bold green] Onboarding Complete [/]",
+        border_style="green",
+        padding=(1, 2),
     ))
 
 
