@@ -17,6 +17,12 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+_CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/145.0.0.0 Safari/537.36"
+)
+
 
 def login(domain: str, email: str, password: str, timeout: int = 30) -> str:
     """Login with credentials and return the JWT access token.
@@ -28,7 +34,7 @@ def login(domain: str, email: str, password: str, timeout: int = 30) -> str:
     resp = requests.post(
         url,
         json={"email": email, "password": password},
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": _CHROME_UA},
         timeout=timeout,
     )
     resp.raise_for_status()
@@ -58,6 +64,7 @@ def add_org_domain(
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            "User-Agent": _CHROME_UA,
             "tenant": tenant_id,
         },
         timeout=timeout,

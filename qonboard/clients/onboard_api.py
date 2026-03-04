@@ -13,6 +13,12 @@ from .extractor import ExtractedDetails
 
 logger = logging.getLogger(__name__)
 
+_CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/145.0.0.0 Safari/537.36"
+)
+
 # Maps the Jira environment field value → base domain
 ENV_DOMAIN_MAP: dict[str, str] = {
     "UAE POC":  "trust.quilr.ai",
@@ -61,7 +67,7 @@ def call_onboard_api_for_user(user: ExtractedDetails, domain: str, cfg: Config) 
     response = requests.post(
         url,
         json=payload,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": _CHROME_UA},
         timeout=cfg.api_timeout_seconds,
     )
     response.raise_for_status()
