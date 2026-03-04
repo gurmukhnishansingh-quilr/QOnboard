@@ -28,12 +28,14 @@ MERGE (TENANT_0:TENANT {
 })
 ON CREATE SET
     TENANT_0.creationTime = $TENANT_0_creationTime,
+    TENANT_0.name         = $TENANT_0_name,
     TENANT_0.subscriber   = $TENANT_0_subscriber,
     TENANT_0.tenant       = $TENANT_0_tenant,
     TENANT_0.internalId   = randomUUID(),
     TENANT_0.new          = true,
     TENANT_0.timestamp    = timestamp()
 ON MATCH SET
+    TENANT_0.name         = $TENANT_0_name,
     TENANT_0.subscriber   = $TENANT_0_subscriber,
     TENANT_0.tenant       = $TENANT_0_tenant,
     TENANT_0.new          = false,
@@ -57,6 +59,7 @@ class Neo4jClient:
             "TENANT_0_id": tenant.id,
             "TENANT_0_subscriber": tenant.subscriberid,
             "TENANT_0_tenant": tenant.id,
+            "TENANT_0_name": tenant.name,
             "TENANT_0_creationTime": datetime.now(tz=timezone.utc).isoformat(),
         }
 
