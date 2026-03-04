@@ -37,13 +37,14 @@ from .config import Config
 from .config_store import ENV_FILE_MAP
 from .clients.jira_client import JiraClient, OnboardTicket
 from .clients.onboard_api import call_onboard_api_for_user, resolve_domain
+from .clients.domain_api import login as domain_login, add_org_domain
 from .clients.env_registry import EnvRegistry
 from .state import StateManager
 
 setup_logging()
 logger = logging.getLogger("agent")
 
-_TOTAL_STEPS = 5
+_TOTAL_STEPS = 6
 _ALL_ENV_NAMES = list(ENV_FILE_MAP.keys())
 
 
@@ -285,12 +286,44 @@ def process_env(
                 monitor_email_addr, env_name,
             )
 
-    # ── STEP 4 — PostgreSQL: apply updates ────────────────────────────
+    # ── STEP 4 — Add org domain ────────────────────────────────────────
     if state.is_step_done(ticket.key, env_name, 4):
-        skip_step(4, "PostgreSQL — Apply Updates", env_name)
+        skip_step(4, "Add Org Domain", env_name)
+    elif domain is None:
+        logger.warning(
+            "[yellow]⚡[/] No API domain for '%s' — skipping Add Org Domain step", env_name
+        )
+        state.mark_step_done(ticket.key, env_name, 4)
     else:
         confirm_step(
-            4, "PostgreSQL — Apply Updates",
+            4, "Add Org Domain",
+            Group(
+                Text(f"  1. POST https://{domain}/bff/auth/auth/login", style="dim"),
+                Text(f"       email: {monitor_email_addr}", style="dim"),
+                Text(""),
+                Text(
+                    f"  2. POST https://{domain}/bff/browser-extension/onboarding/org-domains/add",
+                    style="bold green",
+                ),
+                Text(f'       body:   {{"domain": "{email_domain}"}}', style="dim"),
+                Text(f"       header: tenant: {tenant.id}", style="dim"),
+            ),
+            env_name,
+        )
+        token = domain_login(domain, monitor_email_addr, monitor_pw_plaintext, timeout=30)
+        result = add_org_domain(domain, token, tenant.id, email_domain, timeout=30)
+        logger.info(
+            "[green]✓[/] Org domain [bold]%s[/] registered (%s): %s",
+            email_domain, env_name, result,
+        )
+        state.mark_step_done(ticket.key, env_name, 4)
+
+    # ── STEP 5 — PostgreSQL: apply updates ────────────────────────────
+    if state.is_step_done(ticket.key, env_name, 5):
+        skip_step(5, "PostgreSQL — Apply Updates", env_name)
+    else:
+        confirm_step(
+            5, "PostgreSQL — Apply Updates",
             Syntax(
                 f"UPDATE public.tenant\n"
                 f'  SET "license_config" = \'{{"ai_axis_enabled": true}}\'\n'
@@ -306,19 +339,19 @@ def process_env(
             env_name,
         )
         env_clients.pg.apply_onboarding_updates(email_domain)
-        state.mark_step_done(ticket.key, env_name, 4)
+        state.mark_step_done(ticket.key, env_name, 5)
 
     logger.info(
         "[green]✓[/] PostgreSQL updates applied for [bold]%s[/] (%s)",
         email_domain, env_name,
     )
 
-    # ── STEP 5 — Neo4j: MERGE tenant node ─────────────────────────────
-    if state.is_step_done(ticket.key, env_name, 5):
-        skip_step(5, "Neo4j — MERGE Tenant Node", env_name)
+    # ── STEP 6 — Neo4j: MERGE tenant node ─────────────────────────────
+    if state.is_step_done(ticket.key, env_name, 6):
+        skip_step(6, "Neo4j — MERGE Tenant Node", env_name)
     else:
         confirm_step(
-            5, "Neo4j — MERGE Tenant Node",
+            6, "Neo4j — MERGE Tenant Node",
             Syntax(
                 f"MERGE (TENANT_0:TENANT {{\n"
                 f"  id:         '{tenant.id}',\n"
@@ -337,7 +370,7 @@ def process_env(
             env_name,
         )
         env_clients.neo4j.merge_tenant(tenant)
-        state.mark_step_done(ticket.key, env_name, 5)
+        state.mark_step_done(ticket.key, env_name, 6)
 
     logger.info(
         "[green]✓[/] Neo4j TENANT node merged for [bold]%s[/] (%s)",
