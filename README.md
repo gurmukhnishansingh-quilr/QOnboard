@@ -72,8 +72,7 @@ qonboard config show                      # show all config values
 qonboard config show --env "UAE POC"      # show DB credentials for one environment
 qonboard config set JIRA_URL https://...  # update a global value
 qonboard config set PG_HOST my-host --env "IND POC"  # update an env value
-qonboard config init                      # re-ingest from .env files (skips existing)
-qonboard config init --force              # re-ingest and overwrite existing values
+qonboard config init                      # re-ingest from .env files (overwrites existing values)
 ```
 
 **Option A — via .env files (recommended for initial setup):**

@@ -4,7 +4,7 @@ Config subcommand handler for `qonboard config ...`.
 Usage:
     qonboard config show [--env ENV_NAME]          list config values
     qonboard config set KEY VALUE [--env ENV_NAME]  upsert a value
-    qonboard config init [--force]                  (re-)ingest from .env files
+    qonboard config init                            (re-)ingest from .env files, overwriting existing values
 """
 
 from __future__ import annotations
@@ -129,13 +129,8 @@ def _set(store: ConfigStore, args: argparse.Namespace) -> None:
 
 
 def _init(store: ConfigStore, args: argparse.Namespace) -> None:
-    force: bool = getattr(args, "force", False)
-    if force:
-        console.print("[cyan]Re-ingesting from .env files (overwriting existing values)...[/]")
-    else:
-        console.print("[cyan]Ingesting from .env files (skipping existing keys)...[/]")
-
-    results = store.ingest_from_files(force=force)
+    console.print("[cyan]Re-ingesting from .env files (overwriting existing values)...[/]")
+    results = store.ingest_from_files(force=True)
 
     console.print(f"[green]OK[/] Global keys ingested: [bold]{results['global']}[/]")
     for env_name, count in sorted(results["env"].items()):

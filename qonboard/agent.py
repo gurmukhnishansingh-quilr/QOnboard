@@ -8,7 +8,7 @@ Usage:
 
     qonboard config show [--env NAME]   list config values
     qonboard config set KEY VAL [--env] upsert a config value
-    qonboard config init [--force]      ingest from .env files
+    qonboard config init                ingest from .env files (overwrites existing)
 
 Progress is saved to .onboard_state.json after each step per environment.
 Restarting resumes from where it left off.
@@ -515,12 +515,8 @@ def main() -> None:
     set_p.add_argument("value", help="Config value")
     set_p.add_argument("--env", metavar="ENV_NAME", help="Set in env config instead of global")
 
-    init_p = config_sub.add_parser(
-        "init", help="Ingest config from .env / .env_* files"
-    )
-    init_p.add_argument(
-        "--force", action="store_true",
-        help="Overwrite existing values (default: skip existing keys)",
+    config_sub.add_parser(
+        "init", help="Ingest config from .env / .env_* files (overwrites existing values)"
     )
 
     # ── onboard subcommand (default) ───────────────────────────────────
