@@ -99,6 +99,7 @@ cp .env.example .env
 | `AZURE_OPENAI_API_VERSION` | | Default: `2024-02-01` |
 | `ONBOARD_VENDOR` | | Default: `microsoft` |
 | `API_TIMEOUT_SECONDS` | | Default: `30` |
+| `SLACK_WEBHOOK_URL` | | Slack incoming-webhook URL for completion notifications (optional) |
 
 > **Finding `JIRA_FIELD_ENVIRONMENT`**: Call `GET /rest/api/3/field` on your Jira instance and search for the field labelled *Environment*.
 
@@ -308,6 +309,7 @@ QOnboard/
         ├── postgres_client.py # quilr_auth DB — tenant, user, roles, groups queries + updates
         ├── neo4j_client.py    # MERGE TENANT node (with name property, TLD stripped)
         ├── domain_api.py      # Login → JWT, then POST org-domains/add
+        ├── slack.py           # Slack incoming-webhook notification on completion
         └── env_registry.py    # Lazily wires DB clients per environment (via SQLite config)
 ```
 

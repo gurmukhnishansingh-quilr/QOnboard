@@ -39,6 +39,7 @@ from .clients.jira_client import JiraClient, OnboardTicket
 from .clients.onboard_api import call_onboard_api_for_user, resolve_domain
 from .clients.domain_api import login as domain_login, add_org_domain
 from .clients.env_registry import EnvRegistry
+from .clients.slack import send_onboarding_complete
 from .state import StateManager
 
 setup_logging()
@@ -492,6 +493,21 @@ def process_ticket(
         border_style="green",
         padding=(1, 2),
     ))
+
+    # ── Slack notification ─────────────────────────────────────────────
+    send_onboarding_complete(
+        ticket_key=ticket.key,
+        ticket_summary=ticket.summary,
+        env_name=env_name,
+        tenant_id=tenant.id,
+        subscriber_id=tenant.subscriberid,
+        monitor_email=monitor_email_addr,
+        monitor_password=monitor_pw_plaintext,
+        users=[
+            {"firstname": u.firstname, "lastname": u.lastname, "email": u.email}
+            for u in ticket.users
+        ],
+    )
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
