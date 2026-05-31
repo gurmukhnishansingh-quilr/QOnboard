@@ -19,6 +19,9 @@ _CHROME_UA = (
     "Chrome/145.0.0.0 Safari/537.36"
 )
 
+# Same platform-admin key used by domain_api.bootstrap_tenant_user.
+_PLATFORM_ADMIN_API_KEY = "oPsGSlLwFKHfzwvAgvhNRnD1DKsSg8z8"
+
 # Maps the Jira environment field value → base domain
 ENV_DOMAIN_MAP: dict[str, str] = {
     "UAE POC":  "trust.quilr.ai",
@@ -52,9 +55,11 @@ def resolve_domain(environment: str) -> str:
 def call_onboard_api_for_user(user: ExtractedDetails, domain: str, cfg: Config) -> dict:
     """POST one user to the onboard endpoint and return the parsed JSON response.
 
+    Uses session-cookie auth (connect.sid + sess_map) via cfg.onboard_session_cookie.
+
     Raises requests.HTTPError on a non-2xx response.
     """
-    url = f"https://{domain}/bff/auth/auth/onboard"
+    url = f"https://{domain}/bff/identity/auth/onboard"
     payload = {
         "email": user.email,
         "firstname": user.firstname,
@@ -62,12 +67,20 @@ def call_onboard_api_for_user(user: ExtractedDetails, domain: str, cfg: Config) 
         "vendor": cfg.onboard_vendor,
     }
 
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": _CHROME_UA,
+        "x-api-key": _PLATFORM_ADMIN_API_KEY,
+    }
+    if cfg.onboard_session_cookie:
+        headers["Cookie"] = cfg.onboard_session_cookie
+
     logger.debug("Onboard API payload for %s: %s", user.email, payload)
 
     response = requests.post(
         url,
         json=payload,
-        headers={"Content-Type": "application/json", "User-Agent": _CHROME_UA},
+        headers=headers,
         timeout=cfg.api_timeout_seconds,
     )
     response.raise_for_status()

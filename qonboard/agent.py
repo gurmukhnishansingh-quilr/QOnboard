@@ -17,7 +17,6 @@ Restarting resumes from where it left off.
 from __future__ import annotations
 
 import argparse
-import bcrypt
 import logging
 import secrets
 import sys
@@ -37,7 +36,11 @@ from .config import Config
 from .config_store import ENV_FILE_MAP
 from .clients.jira_client import JiraClient, OnboardTicket
 from .clients.onboard_api import call_onboard_api_for_user, resolve_domain
-from .clients.domain_api import login as domain_login, add_org_domain
+from .clients.domain_api import (
+    bootstrap_tenant_user,
+    login as domain_login,
+    add_org_domain,
+)
 from .clients.env_registry import EnvRegistry
 from .clients.slack import send_onboarding_complete
 from .state import StateManager
@@ -100,11 +103,9 @@ def monitoring_email(email_domain: str) -> str:
     return f"monitor+{label}@quilr.ai"
 
 
-def generate_password() -> tuple[str, str]:
-    """Return (plaintext, bcrypt_hash) for a new random password."""
-    plaintext = secrets.token_urlsafe(16)
-    hashed = bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt()).decode()
-    return plaintext, hashed
+def generate_password() -> str:
+    """Return a fresh random password (URL-safe)."""
+    return secrets.token_urlsafe(16)
 
 
 # ── Per-environment processing ─────────────────────────────────────────────────
@@ -136,7 +137,7 @@ def process_env(
         state.mark_step_done(ticket.key, env_name, 1)
         domain = None
 
-    url = f"https://{domain}/bff/auth/auth/onboard" if domain else ""
+    url = f"https://{domain}/bff/identity/auth/onboard" if domain else ""
 
     if state.is_step_done(ticket.key, env_name, 1):
         skip_step(1, "Onboard API", env_name)
@@ -217,11 +218,11 @@ def process_env(
         tenant.id, tenant.subscriberid,
     )
 
-    # ── STEP 3 — Create monitoring user ───────────────────────────────
+    # ── STEP 3 — Create monitoring user (via bootstrap API) ───────────
     monitor_email_addr = monitoring_email(email_domain)
 
     if state.is_step_done(ticket.key, env_name, 3):
-        skip_step(3, "PostgreSQL — Create Monitoring User", env_name)
+        skip_step(3, "API — Create Monitoring User", env_name)
         # Re-display password so the operator can record it
         console.print()
         console.print(Panel(
@@ -232,60 +233,51 @@ def process_env(
             title="[dim] Monitoring user credentials (from previous run) [/]",
             border_style="dim",
         ))
+    elif domain is None:
+        logger.warning(
+            "[yellow]⚡[/] No API domain for '%s' — cannot bootstrap monitoring user, skipping",
+            env_name,
+        )
+        state.mark_step_done(ticket.key, env_name, 3)
     else:
-        role_ids  = env_clients.pg.get_tenant_role_ids(tenant.id)
-        group_ids = env_clients.pg.get_tenant_group_ids(tenant.id)
-        # Re-hash the shared plaintext for this env's DB
-        password_hash = bcrypt.hashpw(
-            monitor_pw_plaintext.encode(), bcrypt.gensalt()
-        ).decode()
-
-        role_str  = "{" + ",".join(role_ids)  + "}" if role_ids  else "{}"
-        group_str = "{" + ",".join(group_ids) + "}" if group_ids else "{}"
-
+        bootstrap_url = f"https://{domain}/bff/identity/server/platform-admin/bootstrap/tenant"
         confirm_step(
-            3, "PostgreSQL — Create Monitoring User",
-            Syntax(
-                f'INSERT INTO public."user" (\n'
-                f'    "firstname", "lastname", "username", "email", "password",\n'
-                f'    "subscriberId", "tenantIds", "roleIds", "groupIds",\n'
-                f'    "accountType", "status"\n'
-                f') VALUES (\n'
-                f"    'Quilr', 'Monitor', '{monitor_email_addr}', '{monitor_email_addr}', '<bcrypt>',\n"
-                f"    '{tenant.subscriberid}', '{{{tenant.id}}}',\n"
-                f"    '{role_str}', '{group_str}',\n"
-                f"    'credentials', 'active'\n"
-                f');',
-                "sql", theme="monokai",
+            3, "API — Create Monitoring User",
+            Group(
+                Text(f"  POST  {bootstrap_url}", style="bold green"),
+                Text(""),
+                Text(f"       email:        {monitor_email_addr}", style="dim"),
+                Text(f"       password:     <generated>", style="dim"),
+                Text(f"       subscriberId: {tenant.subscriberid}", style="dim"),
+                Text(f"       tenantId:     {tenant.id}", style="dim"),
             ),
             env_name,
         )
-        created = env_clients.pg.create_monitoring_user(
-            monitor_email_addr, tenant, password_hash, role_ids, group_ids
+        bootstrap_tenant_user(
+            domain,
+            monitor_email_addr,
+            monitor_pw_plaintext,
+            tenant.subscriberid,
+            tenant.id,
+            timeout=30,
         )
         state.mark_step_done(ticket.key, env_name, 3)
         state.save_monitoring_user(ticket.key, env_name, monitor_email_addr)
 
         console.print()
-        if created:
-            console.print(Panel(
-                Group(
-                    Text(f"  Email:    {monitor_email_addr}", style="cyan"),
-                    Text(f"  Password: {monitor_pw_plaintext}", style="bold yellow"),
-                ),
-                title="[bold yellow] ⚠  Save this password — it will not be shown again [/]",
-                border_style="yellow",
-                padding=(1, 2),
-            ))
-            logger.info(
-                "[green]✓[/] Monitoring user created: [cyan]%s[/] (%s)",
-                monitor_email_addr, env_name,
-            )
-        else:
-            logger.info(
-                "[yellow]⚡[/] Monitoring user [cyan]%s[/] already existed in %s — skipped",
-                monitor_email_addr, env_name,
-            )
+        console.print(Panel(
+            Group(
+                Text(f"  Email:    {monitor_email_addr}", style="cyan"),
+                Text(f"  Password: {monitor_pw_plaintext}", style="bold yellow"),
+            ),
+            title="[bold yellow] ⚠  Save this password — it will not be shown again [/]",
+            border_style="yellow",
+            padding=(1, 2),
+        ))
+        logger.info(
+            "[green]✓[/] Monitoring user bootstrapped: [cyan]%s[/] (%s)",
+            monitor_email_addr, env_name,
+        )
 
     # ── STEP 4 — PostgreSQL: apply updates ────────────────────────────
     if state.is_step_done(ticket.key, env_name, 4):
@@ -423,7 +415,7 @@ def process_ticket(
     # ── Monitoring password (ticket-level) ─────────────────────────────
     monitor_pw_plaintext = state.get_monitor_password(ticket.key)
     if monitor_pw_plaintext is None:
-        monitor_pw_plaintext, _ = generate_password()
+        monitor_pw_plaintext = generate_password()
         state.save_monitor_password(ticket.key, monitor_pw_plaintext)
 
     if state.is_env_completed(ticket.key, env_name):

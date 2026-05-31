@@ -9,7 +9,6 @@ description = "Quilr customer onboarding agent"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "bcrypt==4.3.0",
     "rich==13.9.4",
     "openai==1.55.3",
     "jira==3.8.0",

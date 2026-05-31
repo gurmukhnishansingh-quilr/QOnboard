@@ -19,7 +19,7 @@ Jira ticket (Customer Onboard)
                 │
                 ├─► [Step 2] PostgreSQL SELECT tenant
                 │
-                ├─► [Step 3] PostgreSQL INSERT monitoring user (credentials / bcrypt)
+                ├─► [Step 3] POST /bff/identity/.../bootstrap/tenant — create monitoring user
                 │
                 ├─► [Step 4] PostgreSQL UPDATE tenant + subscriber
                 │
@@ -226,7 +226,7 @@ After Step 2 fetches the tenant, **Step 3** creates a monitoring user:
   ╚══════════════════════════════════════════════════════╝
 ```
 
-The monitoring user is assigned the tenant's existing roles and groups from `public.roles` and `public.group`. The password is auto-generated, bcrypt-hashed before storage, and saved locally to `.onboard_state.json`.
+The monitoring user is created via `POST /bff/identity/server/platform-admin/bootstrap/tenant` with the tenant's `subscriberId` and `tenantId`. The password is auto-generated, sent in the request body, and saved locally to `.onboard_state.json`.
 
 **Step 5** merges the tenant into Neo4j, including a `name` property derived from the email domain with the TLD stripped (e.g. `acme.com` → `acme`).
 
@@ -305,10 +305,10 @@ QOnboard/
     └── clients/
         ├── jira_client.py     # Jira REST API v3 (ADF parsing + ADF comment writing)
         ├── extractor.py       # Azure OpenAI function calling — extracts users from description
-        ├── onboard_api.py     # POST /bff/auth/auth/onboard
-        ├── postgres_client.py # quilr_auth DB — tenant, user, roles, groups queries + updates
+        ├── onboard_api.py     # POST /bff/identity/auth/onboard
+        ├── postgres_client.py # quilr_auth DB — tenant lookup + onboarding UPDATEs
         ├── neo4j_client.py    # MERGE TENANT node (with name property, TLD stripped)
-        ├── domain_api.py      # Login → JWT, then POST org-domains/add
+        ├── domain_api.py      # Bootstrap monitor user, login → JWT, POST org-domains/add
         ├── slack.py           # Slack incoming-webhook notification on completion
         └── env_registry.py    # Lazily wires DB clients per environment (via SQLite config)
 ```

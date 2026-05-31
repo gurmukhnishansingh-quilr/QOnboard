@@ -68,6 +68,9 @@ class Config:
     onboard_vendor: str = field(
         default_factory=lambda: _optional("ONBOARD_VENDOR", "microsoft")
     )
+    onboard_session_cookie: str = field(
+        default_factory=lambda: _optional("ONBOARD_SESSION_COOKIE", "")
+    )
     api_timeout_seconds: int = field(
         default_factory=lambda: int(_optional("API_TIMEOUT_SECONDS", "30"))
     )
